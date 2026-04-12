@@ -2,12 +2,14 @@ import streamlit as st
 from db_connection import get_connection
 import pandas as pd
 from utils import logout_button, show_top_profile
+from datetime import date, timedelta
 import os
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(page_title="Available Books", page_icon="📚", layout="wide")
 
 show_top_profile()
+
 # ---------------- APPLY CSS ----------------
 def local_css(file_name):
     with open(file_name) as f:
@@ -36,7 +38,7 @@ df = pd.read_sql(
     """
     SELECT id, book_title, author, category, genre, condition_status,
            donor_name, book_image, availability_status,
-           book_type, price, security_deposit
+           book_type, delivery_method
     FROM donations
     WHERE availability_status = 'Available'
     """,
@@ -68,8 +70,7 @@ df["book_title"] = df["book_title"].fillna("").astype(str)
 df["author"] = df["author"].fillna("Unknown").astype(str)
 df["condition_status"] = df["condition_status"].fillna("Not Specified").astype(str)
 df["book_type"] = df["book_type"].fillna("Free").astype(str).str.strip()
-df["price"] = pd.to_numeric(df["price"], errors="coerce").fillna(0)
-df["security_deposit"] = pd.to_numeric(df["security_deposit"], errors="coerce").fillna(0)
+df["delivery_method"] = df["delivery_method"].fillna("Pickup").astype(str).str.strip()
 
 # ---------------- FILTER SECTION ----------------
 st.subheader("🔍 Search and Filter Books")
@@ -100,7 +101,7 @@ with col3:
     selected_genre = st.selectbox("Genre", genre_options)
 
 with col4:
-    selected_book_type = st.selectbox("Book Type", ["All", "Free", "Paid", "Deposit"])
+    selected_book_type = st.selectbox("Book Type", ["All", "Free", "Borrow"])
 
 with col5:
     sort_option = st.selectbox("Sort By", ["Newest", "Title A-Z"])
@@ -139,8 +140,9 @@ else:
         with cols[i % 3]:
             with st.container(border=True):
 
-                if pd.notna(row["book_image"]) and str(row["book_image"]).strip() != "":
-                    image_path = row["book_image"]
+                image_path = row["book_image"]
+
+                if pd.notna(image_path) and isinstance(image_path, str) and image_path.strip() != "":
                     if os.path.exists(image_path):
                         st.image(image_path, width=150)
                     else:
@@ -157,14 +159,12 @@ else:
                 st.write(f"🏷 {category} | {genre}")
                 st.write(f"⭐ {row['condition_status']}")
                 st.write(f"🙍 Donor: {row['donor_name']}")
+                st.write(f"🚚 Delivery: {row['delivery_method']}")
 
-                # -------- BOOK TYPE DISPLAY --------
                 if row["book_type"] == "Free":
                     st.success("🟢 Free Book")
-                elif row["book_type"] == "Paid":
-                    st.info(f"💰 Paid Book — ₹{row['price']:.2f}")
-                elif row["book_type"] == "Deposit":
-                    st.warning(f"🔒 Security Deposit — ₹{row['security_deposit']:.2f} (Refundable)")
+                elif row["book_type"] == "Borrow":
+                    st.info("📘 Borrow Book")
 
                 if row["availability_status"] == "Available":
                     st.success("📘 Available")
@@ -210,7 +210,7 @@ else:
 
                 cursor.execute(
                     """
-                    SELECT availability_status, book_type
+                    SELECT availability_status, book_type, delivery_method
                     FROM donations
                     WHERE id = %s
                     """,
@@ -227,30 +227,37 @@ else:
                     continue
 
                 book_type = result[1]
+                delivery_method = result[2]
 
                 payment_status = "Not Required"
                 deposit_status = "Not Required"
                 refund_status = "Not Applicable"
+                return_status = "Not Required"
+                return_date = None
 
-                if book_type == "Paid":
+                if delivery_method == "Courier":
                     payment_status = "Pending"
 
-                elif book_type == "Deposit":
-                    deposit_status = "Pending"
-                    refund_status = "Pending"
+                if book_type == "Borrow":
+                    return_status = "Not Returned"
+                    return_date = date.today() + timedelta(days=15)
 
                 cursor.execute(
                     """
                     INSERT INTO requests
-                    (username, book_id, payment_status, deposit_status, refund_status)
-                    VALUES (%s, %s, %s, %s, %s)
+                    (username, book_id, status, approved_by, payment_status, deposit_status, refund_status, return_status, return_date)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         st.session_state['user']['username'],
                         book_id,
+                        "Approved",
+                        "Auto System",
                         payment_status,
                         deposit_status,
-                        refund_status
+                        refund_status,
+                        return_status,
+                        return_date
                     )
                 )
 
