@@ -584,3 +584,18 @@ header[data-testid="stHeader"] {
 .about-section ol {
     padding-left: 1.8rem;
 }
+
+/* REMOVE BLUE TEXT BACKGROUND ISSUE */
+.stats-box h3,
+.stats-box p,
+.stats-number,
+.stats-label {
+    background: transparent !important;
+    padding: 0 !important;
+    display: block !important;
+}
+
+/* Also fix random span highlights */
+.stats-box span {
+    background: none !important;
+}
