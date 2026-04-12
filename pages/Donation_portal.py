@@ -39,9 +39,9 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ---------- DONOR INFO ----------
 st.markdown('<div class="page-form-container">', unsafe_allow_html=True)
 
+# ---------- DONOR INFO ----------
 st.subheader("Donor Information")
 donor_name = st.text_input("Full Name")
 email = st.text_input("Email")
@@ -88,7 +88,7 @@ for i in range(num_books):
     elif category == "Technical":
         genre = st.selectbox(
             f"Select Genre {i+1}",
-            ["Computer Science & Applications", "IT", "Electronics"],
+            ["Computer Science", "Computer Science & Applications", "IT", "Electronics"],
             key=f"genre_{i}_{category}"
         )
     else:
@@ -105,28 +105,15 @@ for i in range(num_books):
 
     book_type = st.selectbox(
         f"Book Type {i+1}",
-        ["Free", "Paid", "Deposit"],
+        ["Free", "Borrow"],
         key=f"book_type_{i}"
     )
 
-    price = 0.0
-    security_deposit = 0.0
-
-    if book_type == "Paid":
-        price = st.number_input(
-            f"Enter Price for Book {i+1} (₹)",
-            min_value=0.0,
-            step=10.0,
-            key=f"price_{i}"
-        )
-
-    elif book_type == "Deposit":
-        security_deposit = st.number_input(
-            f"Enter Security Deposit for Book {i+1} (₹)",
-            min_value=0.0,
-            step=10.0,
-            key=f"deposit_{i}"
-        )
+    delivery_method = st.selectbox(
+        f"Delivery Method {i+1}",
+        ["Pickup", "Courier"],
+        key=f"delivery_method_{i}"
+    )
 
     book_image = st.file_uploader(
         f"Upload Image of Book {i+1}",
@@ -141,8 +128,7 @@ for i in range(num_books):
         genre,
         condition_status,
         book_type,
-        price,
-        security_deposit,
+        delivery_method,
         book_image
     ))
 
@@ -156,7 +142,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------- INSERT ----------
 if submitted:
-    if donor_name and all([b[0] for b in books]):
+    if donor_name and all([b[0].strip() for b in books if isinstance(b[0], str)]):
         try:
             conn = get_connection()
             cursor = conn.cursor()
@@ -171,18 +157,9 @@ if submitted:
                     genre,
                     condition_status,
                     book_type,
-                    price,
-                    security_deposit,
+                    delivery_method,
                     book_image
                 ) = book
-
-                if book_type == "Paid" and price <= 0:
-                    st.warning(f"Please enter valid price for '{book_title}'.")
-                    st.stop()
-
-                if book_type == "Deposit" and security_deposit <= 0:
-                    st.warning(f"Please enter valid security deposit for '{book_title}'.")
-                    st.stop()
 
                 img_path = None
                 if book_image:
@@ -196,9 +173,9 @@ if submitted:
                         donor_name, email, phone, donor_type,
                         book_title, author, category, genre,
                         condition_status, donation_date, book_image,
-                        availability_status, book_type, price, security_deposit
+                        availability_status, book_type, delivery_method
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
 
                 values = (
@@ -215,8 +192,7 @@ if submitted:
                     img_path,
                     "Available",
                     book_type,
-                    price,
-                    security_deposit
+                    delivery_method
                 )
 
                 cursor.execute(query, values)
