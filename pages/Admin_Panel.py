@@ -1,6 +1,7 @@
 import streamlit as st
 from db_connection import get_connection
 import pandas as pd
+from datetime import date
 from utils import logout_button
 import plotly.express as px
 
@@ -16,6 +17,8 @@ def local_css(file_name):
 local_css("style.css")
 
 st.title("🛠️ Admin Panel")
+
+COURIER_CHARGE = 50
 
 # ---------------- SESSION ----------------
 if "admin_logged_in" not in st.session_state:
@@ -109,39 +112,37 @@ if st.session_state.admin_logged_in:
 
     st.divider()
 
-    # ---------------- PAYMENT ANALYTICS ----------------
-    st.markdown("### 💳 Payment / Deposit Analytics")
+    # ---------------- BORROW ANALYTICS ----------------
+    st.markdown("### 📘 Borrow Return Analytics")
+
+    return_query = """
+        SELECT return_status, COUNT(*) AS count
+        FROM requests
+        GROUP BY return_status
+    """
+    df_return = pd.read_sql(return_query, conn)
+
+    if not df_return.empty:
+        st.dataframe(df_return, use_container_width=True)
+    else:
+        st.info("No return data available.")
+
+    st.divider()
+
+    # ---------------- COURIER PAYMENT ANALYTICS ----------------
+    st.markdown("### 🚚 Courier Payment Analytics")
 
     payment_query = """
         SELECT payment_status, COUNT(*) AS count
         FROM requests
         GROUP BY payment_status
     """
-    deposit_query = """
-        SELECT deposit_status, COUNT(*) AS count
-        FROM requests
-        GROUP BY deposit_status
-    """
-    refund_query = """
-        SELECT refund_status, COUNT(*) AS count
-        FROM requests
-        GROUP BY refund_status
-    """
-
     df_payment = pd.read_sql(payment_query, conn)
-    df_deposit = pd.read_sql(deposit_query, conn)
-    df_refund = pd.read_sql(refund_query, conn)
 
-    p1, p2, p3 = st.columns(3)
-    with p1:
-        st.write("**Payment Status**")
+    if not df_payment.empty:
         st.dataframe(df_payment, use_container_width=True)
-    with p2:
-        st.write("**Deposit Status**")
-        st.dataframe(df_deposit, use_container_width=True)
-    with p3:
-        st.write("**Refund Status**")
-        st.dataframe(df_refund, use_container_width=True)
+    else:
+        st.info("No payment data available.")
 
     st.divider()
 
@@ -158,15 +159,15 @@ if st.session_state.admin_logged_in:
             r.request_date,
             r.status,
             r.delivery_status,
+            r.delivery_date,
             r.payment_status,
-            r.deposit_status,
-            r.refund_status,
-            r.transaction_id,
+            r.payment_proof,
+            r.return_status,
+            r.return_date,
             d.book_title,
             d.author,
             d.book_type,
-            d.price,
-            d.security_deposit
+            d.delivery_method
         FROM requests r
         JOIN donations d ON r.book_id = d.id
         ORDER BY r.request_date DESC
@@ -186,21 +187,66 @@ if st.session_state.admin_logged_in:
                 st.write(f"**Author:** {row['author']}")
                 st.write(f"**Request Date:** {row['request_date']}")
                 st.write(f"**Book Type:** {row['book_type']}")
+                st.write(f"**Delivery Method:** {row['delivery_method']}")
 
-                if row["book_type"] == "Paid":
-                    st.write(f"**Price:** ₹{float(row['price']):.2f}")
+                if row["delivery_method"] == "Courier":
+                    st.write(f"**Courier Charge:** ₹{COURIER_CHARGE}")
                     st.write(f"**Payment Status:** {row['payment_status']}")
-
-                elif row["book_type"] == "Deposit":
-                    st.write(f"**Security Deposit:** ₹{float(row['security_deposit']):.2f}")
-                    st.write(f"**Deposit Status:** {row['deposit_status']}")
-                    st.write(f"**Refund Status:** {row['refund_status']}")
-
                 else:
-                    st.write("**Payment:** Not Required")
+                    st.write("**Courier Payment:** Not Required")
 
-                if pd.notna(row["transaction_id"]) and row["transaction_id"]:
-                    st.write(f"**Transaction ID:** {row['transaction_id']}")
+                if row["book_type"] == "Borrow":
+                    st.write(f"**Return Status:** {row['return_status']}")
+                    if pd.notna(row["return_date"]):
+                        st.write(f"**Return Date:** {row['return_date']}")
+                else:
+                    st.write("**Return:** Not Required")
+
+                # ---------------- OVERDUE WARNING ----------------
+                if row["book_type"] == "Borrow" and pd.notna(row["return_date"]):
+                      if row["return_status"] != "Returned":
+                          today = date.today()
+                          return_dt = pd.to_datetime(row["return_date"]).date()
+
+                          if today > return_dt:
+                            overdue_days = (today - return_dt).days
+                            st.error(f"⏰ Overdue by {overdue_days} day(s)")
+                # ---------------- COURIER PAYMENT VERIFICATION ----------------
+                if row["delivery_method"] == "Courier" and row["payment_status"] == "Pending Verification":
+                    st.warning("User uploaded courier payment proof. Please verify.")
+
+                    if pd.notna(row["payment_proof"]) and row["payment_proof"]:
+                        st.image(row["payment_proof"], caption="Courier Payment Proof", width=250)
+
+                    colv1, colv2 = st.columns(2)
+
+                    if colv1.button("✅ Verify Courier Payment", key=f"verify_payment_{row['id']}"):
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            """
+                            UPDATE requests
+                            SET payment_status='Paid'
+                            WHERE id=%s
+                            """,
+                            (row['id'],)
+                        )
+                        conn.commit()
+                        st.success("Courier payment verified successfully")
+                        st.rerun()
+
+                    if colv2.button("❌ Reject Payment Proof", key=f"reject_payment_{row['id']}"):
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            """
+                            UPDATE requests
+                            SET payment_status='Pending', payment_proof=NULL
+                            WHERE id=%s
+                            """,
+                            (row['id'],)
+                        )
+                        conn.commit()
+                        st.warning("Courier payment proof rejected")
+                        st.rerun()
 
                 # ---------------- STATUS DISPLAY ----------------
                 if row["status"] == "Approved":
@@ -218,10 +264,9 @@ if st.session_state.admin_logged_in:
                     st.warning(f"Delivery: {row['delivery_status']}")
 
                 # =====================================================
-                # CLEAN ACTION BUTTONS
+                # ACTION BUTTONS
                 # =====================================================
 
-                # 1. Pending request -> Approve / Reject
                 if row["status"] == "Pending":
                     col1, col2 = st.columns(2)
 
@@ -249,15 +294,12 @@ if st.session_state.admin_logged_in:
                         st.warning("Request Rejected")
                         st.rerun()
 
-                # 2. Approved but not dispatched yet
                 elif row["status"] == "Approved" and row["delivery_status"] == "Not Dispatched":
                     allow_dispatch = False
 
-                    if row["book_type"] == "Free":
+                    if row["delivery_method"] == "Pickup":
                         allow_dispatch = True
-                    elif row["book_type"] == "Paid" and row["payment_status"] == "Paid":
-                        allow_dispatch = True
-                    elif row["book_type"] == "Deposit" and row["deposit_status"] == "Paid":
+                    elif row["delivery_method"] == "Courier" and row["payment_status"] == "Paid":
                         allow_dispatch = True
 
                     if allow_dispatch:
@@ -271,12 +313,8 @@ if st.session_state.admin_logged_in:
                             st.success("Book Dispatched")
                             st.rerun()
                     else:
-                        if row["book_type"] == "Paid":
-                            st.info("Waiting for payment")
-                        elif row["book_type"] == "Deposit":
-                            st.info("Waiting for deposit payment")
+                        st.info("Waiting for courier payment")
 
-                # 3. Dispatched -> Delivered
                 elif row["delivery_status"] == "Dispatched":
                     if st.button("Delivered", key=f"deliver_{row['id']}"):
                         cursor = conn.cursor()
@@ -288,30 +326,54 @@ if st.session_state.admin_logged_in:
                         st.success("Book Delivered")
                         st.rerun()
 
-                # 4. Delivered -> only Deposit case gets Refund / Forfeit
                 elif row["delivery_status"] == "Delivered":
-                    if row["book_type"] == "Deposit" and row["refund_status"] == "Pending":
-                        col1, col2 = st.columns(2)
+                    if row["book_type"] == "Borrow":
 
-                        if col1.button("Refund", key=f"refund_{row['id']}"):
-                            cursor = conn.cursor()
-                            cursor.execute(
-                                "UPDATE requests SET refund_status='Refunded' WHERE id=%s",
-                                (row['id'],)
-                            )
-                            conn.commit()
-                            st.success("Deposit Refunded")
-                            st.rerun()
+                        if row["return_status"] == "Not Returned":
+                            st.info("Waiting for user to request return.")
 
-                        if col2.button("Forfeit Deposit", key=f"forfeit_{row['id']}"):
-                            cursor = conn.cursor()
-                            cursor.execute(
-                                "UPDATE requests SET refund_status='Forfeited' WHERE id=%s",
-                                (row['id'],)
-                            )
-                            conn.commit()
-                            st.error("Deposit Forfeited")
-                            st.rerun()
+                        elif row["return_status"] == "Return Requested":
+                            col1, col2 = st.columns(2)
+
+                            if col1.button("✅ Confirm Return", key=f"confirm_return_{row['id']}"):
+                                cursor = conn.cursor()
+                                cursor.execute(
+                                    """
+                                    UPDATE requests
+                                    SET return_status='Returned'
+                                    WHERE id=%s
+                                    """,
+                                    (row['id'],)
+                                )
+                                cursor.execute(
+                                    """
+                                    UPDATE donations
+                                    SET availability_status='Available'
+                                    WHERE id=%s
+                                    """,
+                                    (row['book_id'],)
+                                )
+                                conn.commit()
+                                st.success("Book return confirmed and book is available again.")
+                                st.rerun()
+
+                            if col2.button("❌ Reject Return", key=f"reject_return_{row['id']}"):
+                                cursor = conn.cursor()
+                                cursor.execute(
+                                    """
+                                    UPDATE requests
+                                    SET return_status='Not Returned'
+                                    WHERE id=%s
+                                    """,
+                                    (row['id'],)
+                                )
+                                conn.commit()
+                                st.warning("Return request rejected.")
+                                st.rerun()
+
+                        elif row["return_status"] == "Returned":
+                            st.success("Return completed. No further action required.")
+
                     else:
                         st.success("No further action required")
 
